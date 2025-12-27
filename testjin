@@ -1,0 +1,280 @@
+先featurize组个至少4090
+
+
+1.pip install vllm
+
+2.pip install "numpy<2"
+
+3.# 在 终端窗口 1 运行：
+python -m vllm.entrypoints.openai.api_server \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --dtype auto \
+  --api-key "sk-featurize" \
+  --gpu-memory-utilization 0.85 \
+  --max-model-len 8192
+
+4.# 在 终端窗口 2 运行：
+featurize port export 8000
+
+5.运行后，你会看到类似这样的输出：
+Local port 8000 has been exported to 12345 You can visit http://workspace.featurize.cn:12345 if it's a http server.把上面这个地址 http://workspace.featurize.cn:xxxxx 复制下来。这就是你的公网 API 地址
+
+
+
+然后在自己电脑链接测试：
+
+打开anaconda，并下载开源项目https://github.com/AkagawaTsurunaki/ZerolanLiveRobot?tab=readme-ov-file，如果想要只是做以下直播聊天机器人的话先下这个ZerolanLiveRobot就好了
+
+
+1.curl http://workspace.featurize.cn:43189/v1/models -H "Authorization: Bearer sk-featurize"如果成功： 你会看到一大串包含 Qwen/Qwen2.5-7B-Instruct 的文字。如果失败： 说明连接有问题。
+
+2.如果上面那一步成功了，请用下面这个超长的一行命令来测试对话。
+curl http://workspace.featurize.cn:43189/v1/chat/completions -H "Content-Type: application/json" -H "Authorization: Bearer sk-featurize" -d "{\"model\": \"Qwen/Qwen2.5-7B-Instruct\", \"messages\": [{\"role\": \"user\", \"content\": \"你好\"}]}"
+
+3.进入你的项目文件夹：cd /d D:\1111jin\neureo\ZerolanLiveRobot-main\ZerolanLiveRobot-main
+
+4.conda create --name ZerolanLiveRobot python=3.11 -y
+
+5.激活环境：conda activate ZerolanLiveRobot
+
+6.安装依赖pip install -r requirements.txt
+
+7.pip install "pydantic<=2.11"
+
+8.先运行一次python main.py为了生成配置文件
+
+
+
+
+目前只搭建了云端的大脑 (LLM)，但本地的ASR、TTS和OCR/ShowUI对应的服务 (ZerolanCore) 并没有运行。
+如果现在直接启动，机器人会因为连不上本地的 127.0.0.1:11000 而直接报错崩溃。
+为了让机器人立刻能动起来，我们需要先关掉所有本地没跑起来的服务，只开启云端大模型。用记事本或 VS Code 打开 config.yaml
+
+
+1.找到 llm: 开头的部分，将整段内容修改为下面这样（
+# Configuration for the Large Language Model pipeline.
+  llm:
+    enable: True
+    # 填入 API Key
+    api_key: 'sk-featurize'
+    # 【关键】开启 OpenAI 兼容模式（因为 vLLM 是兼容 OpenAI 协议的）
+    openai_format: True
+    # 模型名称，必须和你 Featurize 启动命令里的完全一致
+    model_id: 'Qwen/Qwen2.5-7B-Instruct'
+    # 填入 Featurize 的公网地址 (注意后面要加 /v1)
+    # ⚠️请检查你的端口号是不是 43189，如果 Featurize 重启过，端口可能会变！
+    predict_url: 'http://workspace.featurize.cn:43189/v1'
+    # 流式地址填一样的即可
+    stream_predict_url: 'http://workspace.featurize.cn:43189/v1'
+
+
+因为本地没有运行 ZerolanCore，我们需要把用到本地服务的模块（除了llm）全部设为 False。
+
+请向下滚动，找到以下几个模块，把它们的 enable: True 全部改为 enable: False：
+
+asr (语音识别) -> enable: False
+
+img_cap (看图说话) -> enable: False
+
+ocr (文字识别) -> enable: False
+
+vid_cap (视频理解) -> enable: False
+
+tts (语音合成) -> enable: False 
+
+vla (视觉动作) -> enable: False
+
+vec_db (向量数据库) -> enable: False
+
+在文件的后半部分找到 character:
+character:
+  # 起个名字，比如 "Qwen"
+  bot_name: 'Qwen'
+
+
+
+
+
+
+
+程序debug：由于采用千问模型因此需要添加相关识别。
+
+1.pipeline/llm/config.py里面替换为
+
+
+from pydantic import Field
+
+from common.enumerator import BaseEnum
+from common.utils.enum_util import enum_to_markdown
+from pipeline.base.base_sync import AbstractPipelineConfig
+
+
+#######
+# LLM #
+#######
+
+class LLMModelIdEnum(BaseEnum):
+    DeepSeekAPI: str = "deepseek-chat"
+    KimiAPI: str = "moonshot-v1-8k"
+
+    ChatGLM3_6B: str = "THUDM/chatglm3-6b"
+    GLM4: str = "THUDM/GLM-4"
+    Qwen_7B_Chat: str = "Qwen/Qwen-7B-Chat"
+    Qwen_2_5_7B_Instruct = 'Qwen/Qwen2.5-7B-Instruct'
+    Shisa_7b_V1: str = "augmxnt/shisa-7b-v1"
+    Yi_6B_Chat: str = "01-ai/Yi-6B-Chat"
+    DeepSeek_R1_Distill: str = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+
+
+class LLMPipelineConfig(AbstractPipelineConfig):
+    api_key: str | None = Field(default=None, description="The API key for accessing the LLM service.　\n"
+                                                          "Kimi API supported: \n"
+                                                          "Reference: https://platform.moonshot.cn/docs/guide/start-using-kimi-api \n"
+                                                          "Deepseek API supported: \n"
+                                                          "Reference: https://api-docs.deepseek.com/zh-cn/")
+    openai_format: bool = Field(default=False, description="Whether the output format is compatible with OpenAI. \n"
+                                                           f"Note: When you use `{LLMModelIdEnum.DeepSeekAPI}` or {LLMModelIdEnum.KimiAPI}, please set it `true`.")
+    model_id: LLMModelIdEnum = Field(default=LLMModelIdEnum.GLM4,
+                                     description=f"The ID of the model used for LLM. \n{enum_to_markdown(LLMModelIdEnum)}")
+    predict_url: str = Field(default="http://127.0.0.1:11000/llm/predict",
+                             description="The URL for LLM prediction requests.")
+    stream_predict_url: str = Field(default="http://127.0.0.1:11000/llm/stream-predict",
+                                    description="The URL for streaming LLM prediction requests.")
+
+
+
+
+
+
+2.同上pipeline/llm文件夹的llm_sync.py替换：
+
+
+from typing import Any
+from pipeline.base.base_sync import CommonModelPipeline
+from pipeline.llm.config import LLMPipelineConfig
+
+class LLMSyncPipeline(CommonModelPipeline):
+
+    def __init__(self, config: LLMPipelineConfig):
+        super().__init__(config)
+        self.api_key = getattr(config, 'api_key', 'EMPTY')
+        self.predict_url = getattr(config, 'predict_url', '')
+        
+        # 1. 尝试获取模型名字的字符串值，防止 Enum 报错
+        raw_id = getattr(config, 'model_id', '')
+        if hasattr(raw_id, 'value'):
+            self.model_id = raw_id.value
+        else:
+            self.model_id = str(raw_id)
+            
+        self.openai_format = getattr(config, 'openai_format', True)
+
+    def predict(self, query) -> Any:
+        """
+        全能预测函数
+        """
+        # 获取输入内容
+        user_text = getattr(query, 'text', str(query))
+        history = getattr(query, 'history', [])
+
+        # 2. 【关键修复】强制修正模型名
+        # 如果配置里的名字看起来像 Qwen，就强制用 Featurize 认识的名字
+        real_model_name = self.model_id
+        if "Qwen" in str(real_model_name):
+            real_model_name = "Qwen/Qwen2.5-7B-Instruct"
+
+        print(f"🤖 [AI思考中] 模型: {real_model_name} | 内容: {user_text}")
+
+        # 检查 openai 库
+        try:
+            from openai import OpenAI
+        except ImportError:
+            print("❌ 错误: 缺少 openai 库，请运行 pip install openai")
+            return {
+                "response": "缺少 openai 依赖库。",
+                "history": history
+            }
+
+        try:
+            # 3. 修正 URL (补全 /v1)
+            base_url = self.predict_url
+            if "featurize" in base_url and not base_url.endswith("/v1"):
+                base_url = base_url.rstrip("/") + "/v1"
+            
+            # 连接云端
+            client = OpenAI(api_key=self.api_key, base_url=base_url)
+
+            # 构建对话
+            messages = []
+            if history:
+                messages.append({"role": "system", "content": history[0].content})
+                for h in history[1:]:
+                    messages.append({"role": h.role, "content": h.content})
+            messages.append({"role": "user", "content": user_text})
+
+            # 发送请求
+            response = client.chat.completions.create(
+                model=real_model_name, # 这里用了修正后的名字
+                messages=messages,
+                max_tokens=512,
+                temperature=0.7,
+                extra_body={"stop_token_ids": [151643]} # Qwen 防废话
+            )
+
+            # 获取回复
+            result_text = response.choices[0].message.content
+            print(f"✅ [AI回复] {result_text}")
+            
+            # 尝试更新历史记录 (让机器人记住刚才说的话)
+            try:
+                from zerolan.data.pipeline.llm import RoleEnum, Conversation
+                # 这一步可能会失败如果包没装好，所以加了 try
+                # 但为了兼容性，我们主要依赖返回的字典
+                if hasattr(query, 'history'):
+                    query.history.append(Conversation(role=RoleEnum.user, content=user_text))
+                    query.history.append(Conversation(role=RoleEnum.assistant, content=result_text))
+            except:
+                pass # 如果更新历史失败就算了，不影响回复
+
+            # 4. 【关键修复】返回字典格式 (Dict)
+            # Pydantic 看到字典会自动把它转换成它想要的对象，不会再报错了
+            return {
+                "response": result_text,
+                "history": history
+            }
+
+        except Exception as e:
+            print(f"❌ [调用失败] {e}")
+            # 出错也返回字典
+            return {
+                "response": f"大脑连接断开了: {e}",
+                "history": history
+            }
+
+    def stream_predict(self, query, chunk_size=None):
+        return self.predict(query)
+
+
+
+
+
+
+###################################运行###############################################
+
+打开anaconda
+
+1.cd /d D:\1111jin\neureo\ZerolanLiveRobot-main\ZerolanLiveRobot-main
+
+2.激活环境：conda activate ZerolanLiveRobot
+
+3.运行 python main.py
+
+4.运行成功后找命令里的配置网址* Running on local URL:  http://127.0.0.1:7860。在里面配置直播流，进入service -> live_stream -> bilibili，勾选enable，然后输入房间号以及下面的sessdata啥的（配置网页有获取教程，就是edgef12点工具栏上面的应用程序然后扩展开左边栏的cookies，找到live.bilibili就行）
+你看到的日志：
+Config file was saved: D:\...\resources\config.yaml Function ... on_config_modified execution costs 0.0 s
+这说明你通过网页端 (WebUI) 点击“Save Config”后，机器人已经把新参数写入了硬盘。
+
+5.对了，改完重启
+
